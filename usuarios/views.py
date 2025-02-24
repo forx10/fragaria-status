@@ -179,34 +179,49 @@ def dashboard_admin(request):
 
 
 
-# necesita cambios con status
 
+@csrf_exempt
 def login_admin(request):
     if request.method == 'POST':
-        form = LoginForm(request.POST)
-        if form.is_valid():
-            user = form.get_user()
-            if user.is_staff:  # Verificamos si es un administrador
-                login(request, user)
-                messages.success(request, "Bienvenido administrador.")
-                return redirect('gestion_usuarios')  # Redirige al panel de administración
+        try:
+            data = json.loads(request.body)
+            form = LoginForm(data)
+            if form.is_valid():
+                user = form.get_user()
+                if user.is_staff:  # Verificamos si es un administrador
+                    login(request, user)
+                    return JsonResponse({
+                        'status': 200,
+                        'success': True,
+                        'message': 'Bienvenido administrador.',
+                        'redirect_url': 'gestion_usuarios'
+                    })
+                else:
+                    return JsonResponse({
+                        'status': 403,
+                        'success': False,
+                        'message': 'No tienes permisos de administrador.'
+                    }, status=403)
             else:
-                messages.error(request, "No tienes permisos de administrador.")
-                return redirect('login')  # Redirige a login si no es admin
+                errors = form.errors.as_json()
+                return JsonResponse({
+                    'status': 400,
+                    'success': False,
+                    'message': 'Formulario inválido.',
+                    'errors': errors
+                }, status=400)
+        except json.JSONDecodeError:
+            return JsonResponse({
+                'status': 400,
+                'success': False,
+                'message': 'Formato JSON inválido.'
+            }, status=400)
     else:
-        form = LoginForm()
-    return render(request, 'usuarios/login.html', {'form': form})
-
-
-
-
-
-
-
-
-
-
-
+        return JsonResponse({
+            'status': 405,
+            'success': False,
+            'message': 'Método no permitido.'
+        }, status=405)
 
 
 #Vista que permite la gestion de usuarios via administrador
@@ -253,13 +268,14 @@ def agregar_usuario(request):
 
 
 
-
-# necesita cambios con status
-
 @login_required
 def editar_usuario(request, user_id):
     if not request.user.is_staff:
-        return HttpResponseForbidden()  # Si no es admin, denegar acceso
+        return JsonResponse({
+            'status': 403,
+            'success': False,
+            'message': 'No tienes permiso para acceder a esta página.'
+        }, status=403)
 
     usuario = get_object_or_404(Usuario, id=user_id)
 
@@ -267,54 +283,62 @@ def editar_usuario(request, user_id):
         form = UsuarioForm(request.POST, instance=usuario)
         if form.is_valid():
             form.save()
-            messages.success(request, "Usuario actualizado exitosamente.")
-            return redirect('gestion_usuarios')  # Redirigir al panel de administración
+            return JsonResponse({
+                'status': 200,
+                'success': True,
+                'message': 'Usuario actualizado exitosamente.',
+                'redirect_url': 'gestion_usuarios'
+            })
+        else:
+            errors = form.errors.as_json()
+            return JsonResponse({
+                'status': 400,
+                'success': False,
+                'message': 'Formulario inválido.',
+                'errors': errors
+            }, status=400)
     else:
         form = UsuarioForm(instance=usuario)
-
-    return render(request, 'usuarios/editar_usuario.html', {'form': form, 'usuario': usuario})
-
-
-
-
-
-
-
+        return render(request, 'usuarios/editar_usuario.html', {'form': form, 'usuario': usuario})
 
 
 #Vista que permite eliminar usuarios via administrador
 
-# necesita cambios con status
 @login_required
 def eliminar_usuario(request, user_id):
     if not request.user.is_staff:
-        return HttpResponseForbidden()  # Si no es admin, no da el acceso
+        return JsonResponse({
+            'status': 403,
+            'success': False,
+            'message': 'No tienes permiso para acceder a esta página.'
+        }, status=403)
 
     usuario = get_object_or_404(Usuario, id=user_id)
 
     if request.method == 'POST':
         try:
-           
-            usuario.actividades.clear()  
-            usuario.plantacion = None  
-
- 
+            usuario.actividades.clear()
+            usuario.plantacion = None
             FechasSiembra.objects.filter(usuario=usuario).delete()
-
             usuario.delete()
-
-            messages.success(request, f"El usuario {usuario.first_name} {usuario.last_name} ha sido eliminado exitosamente.")
+            return JsonResponse({
+                'status': 200,
+                'success': True,
+                'message': f"El usuario {usuario.first_name} {usuario.last_name} ha sido eliminado exitosamente.",
+                'redirect_url': 'gestion_usuarios'
+            })
         except Exception as e:
-            messages.error(request, f"Ocurrió un error al eliminar el usuario: {e}")
-
-        return redirect('gestion_usuarios') 
-
-    return render(request, 'usuarios/eliminar_usuario.html', {'usuario': usuario})
-
-
-
-
-
+            return JsonResponse({
+                'status': 500,
+                'success': False,
+                'message': f"Ocurrió un error al eliminar el usuario: {str(e)}"
+            }, status=500)
+    else:
+        return JsonResponse({
+            'status': 405,
+            'success': False,
+            'message': 'Método no permitido.'
+        }, status=405)
 
 
 
@@ -337,16 +361,8 @@ def registro(request):
     
     return JsonResponse({"message": "Método no permitido."}, status=405)
 
-
-
-
-
-
-
-
 #Funcion que permite la restauracion de contraseña generando un token y enviandolo via gmail, siempre y cuando el correo registrado este asociado a una cuenta
 #de google, de lo contrario,este correo no llegara.
-
 
 @csrf_exempt
 def password_reset_api(request):
@@ -387,36 +403,44 @@ def password_reset_api(request):
 #Redireccion a la pagina mediante enlace enviado via gmail, el cual permite realizar la actualizacion de contraseña y redireccion a login.
 
 
-
-
-
-
-# necesita cambios con status
-
 def reset_password(request, uidb64, token):
     try:
-        # Decodificar el uid
         uid = urlsafe_base64_decode(uidb64).decode()
         user = get_user_model().objects.get(pk=uid)
-        
-        # Verificar si el token es válido
         if default_token_generator.check_token(user, token):
             if request.method == 'POST':
                 form = SetPasswordForm(user, request.POST)
                 if form.is_valid():
                     form.save()
-                    messages.success(request, 'Tu contraseña ha sido restablecida correctamente.')
-                    return redirect('login')  # Redirige a la página de inicio de sesión
+                    return JsonResponse({
+                        'status': 200,
+                        'success': True,
+                        'message': 'Tu contraseña ha sido restablecida correctamente.',
+                        'redirect_url': 'login'
+                    })
+                else:
+                    errors = form.errors.as_json()
+                    return JsonResponse({
+                        'status': 400,
+                        'success': False,
+                        'message': 'Formulario inválido.',
+                        'errors': errors
+                    }, status=400)
             else:
                 form = SetPasswordForm(user)
-            
-            return render(request, 'usuarios/reset_password.html', {'form': form})
+                return render(request, 'usuarios/reset_password.html', {'form': form})
         else:
-            messages.error(request, 'El enlace de restablecimiento de contraseña no es válido o ha expirado.')
-            return redirect('password_reset')
+            return JsonResponse({
+                'status': 400,
+                'success': False,
+                'message': 'El enlace de restablecimiento de contraseña no es válido o ha expirado.'
+            }, status=400)
     except (TypeError, ValueError, OverflowError, user.DoesNotExist):
-        messages.error(request, 'El enlace de restablecimiento de contraseña no es válido o ha expirado.')
-        return redirect('password_reset')
+        return JsonResponse({
+            'status': 400,
+            'success': False,
+            'message': 'El enlace de restablecimiento de contraseña no es válido o ha expirado.'
+        }, status=400)
 
 
 
@@ -561,7 +585,44 @@ TRADUCCION_CLIMA = {
 # Vista para registrar una nueva plantación
 @login_required
 def registrar_plantacion(request):
-    
+    # Configuración de la API del clima
+    API_KEY = 'b38f3f8558d7bee2759f548984ae5505'  # Reemplaza con tu clave API
+    ubicacion = 'Pereira,CO'
+    url = f"http://api.openweathermap.org/data/2.5/forecast?q={ubicacion}&appid={API_KEY}&units=metric"
+
+    # Obtener datos del clima
+    response = requests.get(url)
+    if response.status_code != 200:
+        messages.error(request, 'No se pudo obtener el clima. Inténtalo de nuevo más tarde.')
+        return render(request, 'usuarios/registrar_plantacion.html', {'form': PlantacionForm()})
+
+    clima_data = response.json()
+    fechas_recomendadas = []
+
+    # Filtrar fechas con clima templado
+    for pronostico in clima_data['list']:
+        fecha = pronostico['dt_txt']  # Fecha en formato 'año-mes-dia h:min:seg'
+        temperatura = pronostico['main']['temp']
+        if 15 <= temperatura <= 25:  # Rango de clima templado
+            fecha_formateada = datetime.strptime(fecha, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d')
+            if fecha_formateada not in fechas_recomendadas:  # Evitar duplicados
+                fechas_recomendadas.append(fecha_formateada)
+
+    # Obtener el clima actual
+    clima_actual_url = f"http://api.openweathermap.org/data/2.5/weather?q={ubicacion}&appid={API_KEY}&units=metric"
+    clima_actual_response = requests.get(clima_actual_url)
+    if clima_actual_response.status_code == 200:
+        clima_actual_data = clima_actual_response.json()
+        temperatura_actual = clima_actual_data['main']['temp']
+        descripcion_ingles = clima_actual_data['weather'][0]['description']
+        descripcion_actual = TRADUCCION_CLIMA.get(descripcion_ingles, descripcion_ingles)
+        humedad_actual = clima_actual_data['main']['humidity']
+        presion_actual = clima_actual_data['main']['pressure']
+        velocidad_viento_actual = clima_actual_data['wind']['speed']
+    else:
+        temperatura_actual = descripcion_actual = humedad_actual = presion_actual = velocidad_viento_actual = None
+
+    # solicitudes POST estoy cansadoooooo jaja erdaa con tanta cosa por hacer y nos las estoy haciendo bien por estar pensando si estás bien.
     if request.method == 'POST':
         form = PlantacionForm(request.POST)
         if form.is_valid():
@@ -569,59 +630,37 @@ def registrar_plantacion(request):
             plantacion.usuario = request.user
             fecha_recomendada = request.POST.get('fecha_recomendada')
             fecha_personalizada = request.POST.get('fecha_personalizada')
+
             if fecha_personalizada:
                 plantacion.fecha_siembra = fecha_personalizada
             elif fecha_recomendada:
                 plantacion.fecha_siembra = fecha_recomendada
             else:
-                messages.error(request, 'Debes seleccionar una fecha de siembra.')
-                return render(request, 'usuarios/registrar_plantacion.html', {
-                    'form': form,
-                    'fechas_recomendadas': fechas_recomendadas})
-                
-        plantacion.save()
+                return JsonResponse({
+                    'status': 400,
+                    'success': False,
+                    'message': 'Debes seleccionar una fecha de siembra.'
+                }, status=400)
 
-        messages.success(request, 'Plantación registrada correctamente.')
-        return redirect('plantaciones')
+            plantacion.save()
+            return JsonResponse({
+                'status': 200,
+                'success': True,
+                'message': 'Plantación registrada correctamente.',
+                'redirect_url': 'plantaciones'
+            })
+        else:
+            errors = form.errors.as_json()
+            return JsonResponse({
+                'status': 400,
+                'success': False,
+                'message': 'Formulario inválido.',
+                'errors': errors
+            }, status=400)
+
+    # solicitudes GET
     else:
         form = PlantacionForm()
-        API_KEY = 'b38f3f8558d7bee2759f548984ae5505'  
-        ubicacion = 'Pereira,CO'  
-        url = f"http://api.openweathermap.org/data/2.5/forecast?q={ubicacion}&appid={API_KEY}&units=metric"
-
-        # Obtener datos del clima
-        response = requests.get(url)
-        if response.status_code != 200:
-            messages.error(request, 'No se pudo obtener el clima. Inténtalo de nuevo más tarde.')
-            return render(request, 'usuarios/registrar_plantacion.html', {'form': form})
-
-        clima_data = response.json()
-        fechas_recomendadas = []
-
-        # Filtrar fechas con clima templado
-        for pronostico in clima_data['list']:
-            fecha = pronostico['dt_txt']  # Fecha en formato 'año-mes-dia h:min:seg'
-            temperatura = pronostico['main']['temp']
-            if 15 <= temperatura <= 25:  # Rango de clima templado
-                fecha_formateada = datetime.strptime(fecha, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d')
-                if fecha_formateada not in fechas_recomendadas:  # Evitar duplicados
-                    fechas_recomendadas.append(fecha_formateada)
-                    
-
-
-        clima_actual_url = f"http://api.openweathermap.org/data/2.5/weather?q={ubicacion}&appid={API_KEY}&units=metric"
-        clima_actual_response = requests.get(clima_actual_url)
-        if clima_actual_response.status_code == 200:
-            clima_actual_data = clima_actual_response.json()
-            temperatura_actual = clima_actual_data['main']['temp']
-            descripcion_ingles = clima_actual_data['weather'][0]['description']
-            descripcion_actual = TRADUCCION_CLIMA.get(descripcion_ingles, descripcion_ingles)
-            humedad_actual = clima_actual_data['main']['humidity']
-            presion_actual = clima_actual_data['main']['pressure']
-            velocidad_viento_actual = clima_actual_data['wind']['speed']
-        else:
-            temperatura_actual = descripcion_actual = humedad_actual = presion_actual = velocidad_viento_actual = None
-
         return render(request, 'usuarios/registrar_plantacion.html', {
             'form': form,
             'fechas_recomendadas': fechas_recomendadas,
@@ -631,52 +670,68 @@ def registrar_plantacion(request):
             'presion': presion_actual,
             'velocidad_viento': velocidad_viento_actual,
             'ubicacion': ubicacion,
-        })
+        })           
+
+
         
         
         
         
-        
-# necesita cambios con status        
-# Vista para registrar una actividad
+
 def registrar_actividad(request):
     if request.method == 'POST':
         form = ActividadForm(request.POST)
         if form.is_valid():
-            actividad = form.save()  # Guarda la actividad
-            # Crear el estado de la actividad como "Pendiente"
+            actividad = form.save()
             estado = EstadoActividad(estado="Pendiente", actividad=actividad)
             estado.save()
-            return redirect('lista_actividades')  # Redirige a la lista de actividades o cualquier otra vista
+            return JsonResponse({
+                'status': 200,
+                'success': True,
+                'message': 'Actividad registrada correctamente.',
+                'redirect_url': 'lista_actividades'
+            })
+        else:
+            errors = form.errors.as_json()
+            return JsonResponse({
+                'status': 400,
+                'success': False,
+                'message': 'Formulario inválido.',
+                'errors': errors
+            }, status=400)
     else:
         form = ActividadForm()
-    
-    return render(request, 'registrar_actividad.html', {'form': form})
-
-# Vista para listar todas las actividades
-def lista_actividades(request):
-    actividades = Actividad.objects.all()  # Obtén todas las actividades
-    return render(request, 'usuarios/lista_actividades.html', {'actividades': actividades})
+        return render(request, 'registrar_actividad.html', {'form': form})
 
 
 
 
 
-# necesita cambios con status
-# Vista para registrar el estado de una actividad
 def registrar_estado_actividad(request, actividad_id):
-    actividad = Actividad.objects.get(id=actividad_id)  # Obtiene la actividad por ID
+    actividad = get_object_or_404(Actividad, id=actividad_id)
     if request.method == 'POST':
         form = EstadoActividadForm(request.POST)
         if form.is_valid():
             estado = form.save(commit=False)
-            estado.actividad = actividad  # Relaciona el estado con la actividad
+            estado.actividad = actividad
             estado.save()
-            return redirect('lista_actividades')  # Redirige a la lista de actividades
+            return JsonResponse({
+                'status': 200,
+                'success': True,
+                'message': 'Estado de la actividad registrado correctamente.',
+                'redirect_url': 'lista_actividades'
+            })
+        else:
+            errors = form.errors.as_json()
+            return JsonResponse({
+                'status': 400,
+                'success': False,
+                'message': 'Formulario inválido.',
+                'errors': errors
+            }, status=400)
     else:
         form = EstadoActividadForm()
-
-    return render(request, 'actividades/registrar_estado_actividad.html', {'form': form, 'actividad': actividad})
+        return render(request, 'actividades/registrar_estado_actividad.html', {'form': form, 'actividad': actividad})
 
 
 
@@ -712,34 +767,55 @@ def listar_plantaciones(request):
     return render(request, 'usuarios/plantaciones.html', {'plantaciones': plantaciones})
 
 
-
-
-
-
-# necesita cambios con status
 @login_required
 def editar_plantacion(request, id):
     plantacion = get_object_or_404(Plantacion, id=id)
-    
     if request.method == 'POST':
         form = PlantacionForm(request.POST, instance=plantacion)
         if form.is_valid():
             form.save()
-            messages.success(request, 'Plantación actualizada correctamente.')
-            return redirect('plantaciones')
+            return JsonResponse({
+                'status': 200,
+                'success': True,
+                'message': 'Plantación actualizada correctamente.',
+                'redirect_url': 'plantaciones'
+            })
+        else:
+            errors = form.errors.as_json()
+            return JsonResponse({
+                'status': 400,
+                'success': False,
+                'message': 'Formulario inválido.',
+                'errors': errors
+            }, status=400)
     else:
         form = PlantacionForm(instance=plantacion)
-    
-    return render(request, 'usuarios/editar_plantacion.html', {'form': form})
+        return render(request, 'usuarios/editar_plantacion.html', {'form': form})
 
 
 
-# necesita cambios con status
 @login_required
 def eliminar_plantacion(request, id):
     plantacion = get_object_or_404(Plantacion, id=id)
-    plantacion.delete()
-    messages.success(request, 'Plantación eliminada correctamente.')
-    return redirect('plantaciones')
-
+    if request.method == 'POST':
+        try:
+            plantacion.delete()
+            return JsonResponse({
+                'status': 200,
+                'success': True,
+                'message': 'Plantación eliminada correctamente.',
+                'redirect_url': 'plantaciones'
+            })
+        except Exception as e:
+            return JsonResponse({
+                'status': 500,
+                'success': False,
+                'message': f"Ocurrió un error al eliminar la plantación: {str(e)}"
+            }, status=500)
+    else:
+        return JsonResponse({
+            'status': 405,
+            'success': False,
+            'message': 'Método no permitido.'
+        }, status=405)
 
